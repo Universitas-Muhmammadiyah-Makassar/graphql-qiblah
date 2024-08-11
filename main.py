@@ -7,131 +7,201 @@ import math
 from timezonefinder import TimezoneFinder
 import pytz
 
-# Fungsi utilitas yang ada tetap sama seperti sebelumnya
-def dms_to_dd(degrees, minutes, seconds, direction):
-    dd = degrees + minutes / 60 + seconds / 3600
+# Fungsi untuk mengonversi DMS (Derajat, Menit, Detik) ke Derajat Desimal
+def dms_to_decimal(degrees, minutes, seconds, direction):
+    decimal = degrees + minutes / 60 + seconds / 3600
     if direction in ['S', 'W']:
-        dd *= -1
-    return dd
+        decimal *= -1  # Negatif untuk arah Selatan dan Barat
+    return decimal
 
-def calculate_qibla_direction(lat1, long1, lat2, long2):
-    delta_long = to_radians(long2 - long1)
-    lat1_rad = to_radians(lat1)
-    lat2_rad = to_radians(lat2)
+# Fungsi untuk mengonversi Derajat Desimal ke DMS
+def to_dms(decimal):
+    absolute = abs(decimal)
+    degrees = math.floor(absolute)
+    minutes_not_truncated = (absolute - degrees) * 60
+    minutes = math.floor(minutes_not_truncated)
+    seconds = (minutes_not_truncated - minutes) * 60
+    return degrees, minutes, seconds
 
-    x = math.sin(delta_long) * math.cos(lat2_rad)
-    y = math.cos(lat1_rad) * math.sin(lat2_rad) - (math.sin(lat1_rad) * math.cos(lat2_rad) * math.cos(delta_long))
-    qibla_direction = math.degrees(math.atan2(x, y))
+# Fungsi untuk menghitung arah Kiblat
+def calculate_qibla_direction(lat1_dms, lon1_dms):
+    # Koordinat Ka'bah dalam DMS
+    lat2_dms = (21, 25, 21.2, 'N')
+    lon2_dms = (39, 49, 34.2, 'E')
 
-    qibla_direction = (qibla_direction + 360) % 360
+    # Konversi lokasi pengamatan ke derajat desimal
+    lat1 = dms_to_decimal(*lat1_dms)
+    lon1 = dms_to_decimal(*lon1_dms)
 
-    return qibla_direction
+    # Konversi lokasi Ka'bah ke derajat desimal
+    lat2 = dms_to_decimal(*lat2_dms)
+    lon2 = dms_to_decimal(*lon2_dms)
 
-def to_radians(degrees):
-    return degrees * (math.pi / 180)
+    # Konversi derajat ke radian
+    lat1_rad = math.radians(lat1)
+    lat2_rad = math.radians(lat2)
+    delta_lambda_rad = math.radians(lon2 - lon1)
 
-def get_timezone_name_and_offset(latitude, longitude, date_time):
-    tf = TimezoneFinder()
-    timezone_str = tf.timezone_at(lng=longitude, lat=latitude)
-    if timezone_str is None:
-        raise ValueError("Could not determine timezone for the provided coordinates.")
-    
-    timezone = pytz.timezone(timezone_str)
-    utc_offset = timezone.utcoffset(date_time).total_seconds() / 3600
+    # Hitung arah Kiblat
+    x = math.sin(delta_lambda_rad)
+    y = math.cos(lat1_rad) * math.tan(lat2_rad) - math.sin(lat1_rad) * math.cos(delta_lambda_rad)
+    qibla_direction_rad = math.atan2(x, y)
 
-    if timezone_str == 'Asia/Makassar':
-        timezone_name = timezone_str + ' - WITA'
-    elif timezone_str == 'Asia/Jakarta':
-        timezone_name = timezone_str + ' - WIB'
-    elif timezone_str == 'Asia/Jayapura':
-        timezone_name = timezone_str + ' - WIT'
-    else:
-        timezone_name = timezone_str
-    
-    return timezone_name, utc_offset
+    # Konversi arah Qibla dari radian ke derajat
+    qibla_direction_deg = math.degrees(qibla_direction_rad)
 
-def parse_dms(dms_str):
-    dms_str = dms_str.strip()
-    parts = dms_str.split(' ')
-    degrees = int(parts[0][:-1])
-    minutes = int(parts[1][:-1])
-    seconds = float(parts[2][:-1])
-    direction = parts[3]
-    return degrees, minutes, seconds, direction
+    # Sesuaikan arah Qibla agar berada dalam rentang [0, 360)
+    qibla_direction_deg_adjusted = qibla_direction_deg
+    if qibla_direction_deg_adjusted < 0:
+        qibla_direction_deg_adjusted += 360
 
-# Definisikan Tipe Input untuk GraphQL
-@strawberry.input
-class LocationInput:
-    latitude: str
-    longitude: str
-    datetime_str: str
+    return lat1, lon1, lat2, lon2, lat1_rad, lat2_rad, delta_lambda_rad, x, y, qibla_direction_rad, qibla_direction_deg, qibla_direction_deg_adjusted
 
-# Definisikan Mutasi
-@strawberry.type
-class Mutation:
-    @strawberry.mutation
-    def calculate_solar(self, location_data: LocationInput) -> str:
-        try:
-            # Parse latitude and longitude strings
-            lat_deg, lat_min, lat_sec, lat_dir = parse_dms(location_data.latitude)
-            lon_deg, lon_min, lon_sec, lon_dir = parse_dms(location_data.longitude)
-            
-            observation_latitude = dms_to_dd(lat_deg, lat_min, lat_sec, lat_dir)
-            observation_longitude = dms_to_dd(lon_deg, lon_min, lon_sec, lon_dir)
+# Fungsi untuk menghitung jarak menggunakan metode Vincenty
+def vincenty_distance(lat1, lon1, lat2, lon2):
+    a = 6378137.0  # Semi-major axis
+    f = 1 / 298.257223563  # Flattening
+    b = (1 - f) * a
 
-            # Parse datetime string
-            date_time = datetime.strptime(location_data.datetime_str, '%Y/%m/%d %H:%M:%S')
-            timezone_name, timezone_offset = get_timezone_name_and_offset(observation_latitude, observation_longitude, date_time)
+    L = math.radians(lon2 - lon1)
+    U1 = math.atan((1 - f) * math.tan(math.radians(lat1)))
+    U2 = math.atan((1 - f) * math.tan(math.radians(lat2)))
+    sinU1 = math.sin(U1)
+    cosU1 = math.cos(U1)
+    sinU2 = math.sin(U2)
+    cosU2 = math.cos(U2)
 
-            utc_time = date_time - timedelta(hours=timezone_offset)
-            local_time = date_time
+    lambda_ = L
+    lambda_prev = 0
+    iter_limit = 1000
 
-            observer = ephem.Observer()
-            observer.lat = str(observation_latitude)
-            observer.lon = str(observation_longitude)
-            observer.elevation = 8
-            observer.date = utc_time.strftime('%Y/%m/%d %H:%M:%S')
+    while abs(lambda_ - lambda_prev) > 1e-12 and iter_limit > 0:
+        sin_lambda = math.sin(lambda_)
+        cos_lambda = math.cos(lambda_)
+        sin_sigma = math.sqrt((cosU2 * sin_lambda) ** 2 +
+                              (cosU1 * sinU2 - sinU1 * cosU2 * cos_lambda) ** 2)
+        cos_sigma = sinU1 * sinU2 + cosU1 * cosU2 * cos_lambda
+        sigma = math.atan2(sin_sigma, cos_sigma)
+        sin_alpha = cosU1 * cosU2 * sin_lambda / sin_sigma
+        cos2_alpha = 1 - sin_alpha ** 2
+        cos2_sigma_m = cos_sigma - 2 * sinU1 * sinU2 / cos2_alpha
+        C = f / 16 * cos2_alpha * (4 + f * (4 - 3 * cos2_alpha))
+        lambda_prev = lambda_
+        lambda_ = L + (1 - C) * f * sin_alpha * (
+                sigma + C * sin_sigma * (cos2_sigma_m + C * cos_sigma * (-1 + 2 * cos2_sigma_m ** 2))
+        )
+        iter_limit -= 1
 
-            sun = ephem.Sun(observer)
-            solar_azimuth = sun.az * 180 / math.pi
-            solar_elevation = sun.alt * 180 / math.pi
+    u2 = cos2_alpha * (a ** 2 - b ** 2) / (b ** 2)
+    A = 1 + u2 / 16384 * (4096 + u2 * (-768 + u2 * (320 - 175 * u2)))
+    B = u2 / 1024 * (256 + u2 * (-128 + u2 * (74 - 47 * u2)))
+    delta_sigma = B * sin_sigma * (
+            cos2_sigma_m + B / 4 * (
+            cos_sigma * (-1 + 2 * cos2_sigma_m ** 2) -
+            B / 6 * cos2_sigma_m * (-3 + 4 * sin_sigma ** 2) * (-3 + 4 * cos2_sigma_m ** 2)
+    ))
 
-            shadow_azimuth = (solar_azimuth + 180) % 360
+    s = b * A * (sigma - delta_sigma)
 
-            kaaba_lat_dms = [21, 25, 21.2, 'N']
-            kaaba_long_dms = [39, 49, 34.2, 'E']
-            kaaba_lat = dms_to_dd(*kaaba_lat_dms)
-            kaaba_long = dms_to_dd(*kaaba_long_dms)
-            qibla_direction = calculate_qibla_direction(observation_latitude, observation_longitude, kaaba_lat, kaaba_long)
-
-            shadow_azimuth_difference = abs(shadow_azimuth - qibla_direction)
-            shadow_azimuth_difference = min(shadow_azimuth_difference, 360 - shadow_azimuth_difference)
-
-            sun_azimuth_difference = abs(solar_azimuth - qibla_direction)
-            sun_azimuth_difference = min(sun_azimuth_difference, 360 - sun_azimuth_difference)
-
-            result = f"""
-            Local Time: {local_time.strftime('%Y/%m/%d %H:%M:%S')} ({timezone_name})
-            UTC Time: {utc_time.strftime('%Y/%m/%d %H:%M:%S')}
-            Qibla Direction: {qibla_direction:.2f}° from the North
-            Solar Elevation: {solar_elevation:.2f}°
-            Solar Azimuth: {solar_azimuth:.2f}°
-            Shadow Azimuth: {shadow_azimuth:.2f}°
-            Solar Azimuth and Qibla Difference: {sun_azimuth_difference:.2f}°
-            Shadow Azimuth and Qibla Difference: {shadow_azimuth_difference:.2f}°
-            """
-            return result.strip()
-
-        except Exception as e:
-            return f"Error: {str(e)}"
+    return s  # Jarak dalam meter
 
 # Definisikan Query
 @strawberry.type
 class Query:
-    hello: str = "Hello World"
+    @strawberry.field
+    def calculate_solar(
+        self, 
+        latitude: str, 
+        longitude: str, 
+        datetime_str: str = None
+    ) -> str:
+        try:
+            # Jika datetime_str tidak diberikan, gunakan waktu saat ini
+            if datetime_str is None:
+                datetime_str = datetime.now().strftime("%Y/%m/%d %H:%M:%S")
+            
+            # Parse latitude and longitude strings
+            lat1_dms = latitude.split()
+            lon1_dms = longitude.split()
+            lat1_dms = (int(lat1_dms[0][:-1]), int(lat1_dms[1][:-1]), float(lat1_dms[2][:-1]), lat1_dms[3])
+            lon1_dms = (int(lon1_dms[0][:-1]), int(lon1_dms[1][:-1]), float(lon1_dms[2][:-1]), lon1_dms[3])
+            
+            # Hitung arah Kiblat dan dapatkan nilai intermediate
+            lat1, lon1, lat2, lon2, phi1, phi2, deltaLambda, x, y, qiblaDirectionRad, qiblaDirectionDeg, qiblaDirectionDegAdjusted = calculate_qibla_direction(lat1_dms, lon1_dms)
+
+            # Hitung jarak antara lokasi pengamatan dan Ka'bah
+            distance_meters = vincenty_distance(lat1, lon1, lat2, lon2)
+
+            # Konversi jarak ke kilometer
+            distance_km = distance_meters / 1000
+
+            # Konversi koordinat pengamatan dan Ka'bah ke DMS
+            lat1_dms_converted = to_dms(lat1)
+            lon1_dms_converted = to_dms(lon1)
+
+            lat2_dms_converted = to_dms(lat2)
+            lon2_dms_converted = to_dms(lon2)
+
+            # Format hasil ke dalam string
+            output = f"""
+1. Koordinat Lokasi Pengamatan:
+    - Lintang (DMS): {lat1_dms_converted[0]}° {lat1_dms_converted[1]}’ {lat1_dms_converted[2]:.2f}” {'Selatan' if lat1 < 0 else 'Utara'}
+    - Bujur (DMS): {lon1_dms_converted[0]}° {lon1_dms_converted[1]}’ {lon1_dms_converted[2]:.2f}” {'Barat' if lon1 < 0 else 'Timur'}
+
+2. Konversi ke Derajat Desimal:
+    - Lintang (ϕ₁): {lat1:.10f}°
+    - Bujur (λ₁): {lon1:.10f}°
+
+3. Koordinat Ka'bah:
+    - Lintang (DMS): {lat2_dms_converted[0]}° {lat2_dms_converted[1]}’ {lat2_dms_converted[2]:.2f}” Utara
+    - Bujur (DMS): {lon2_dms_converted[0]}° {lon2_dms_converted[1]}’ {lon2_dms_converted[2]:.2f}” Timur
+
+4. Konversi ke Derajat Desimal:
+    - Lintang (ϕ₂): {lat2:.10f}°
+    - Bujur (λ₂): {lon2:.10f}°
+
+5. Konversi ke Radian:
+    - ϕ₁ = {lat1:.10f}° × π/180 = {phi1:.10f} rad
+    - ϕ₂ = {lat2:.10f}° × π/180 = {phi2:.10f} rad
+    - Δλ = ({lon2:.10f}° - {lon1:.10f}°) × π/180 = {deltaLambda:.10f} rad
+
+6. Perhitungan Arah Kiblat:
+    - sin(Δλ) = sin({deltaLambda:.10f}) = {math.sin(deltaLambda):.10f}
+    - cos(ϕ₂) = cos({phi2:.10f}) = {math.cos(phi2):.10f}
+    - x = sin(Δλ) = {math.sin(deltaLambda):.10f}
+    - y = cos(ϕ₁) × tan(ϕ₂) - sin(ϕ₁) × cos(Δλ)
+        = {math.cos(phi1):.10f} × {math.tan(phi2):.10f} - {math.sin(phi1):.10f} × {math.cos(deltaLambda):.10f}
+        = {y:.10f}
+
+7. Arah Kiblat (radian):
+    - Q = atan2(x, y) = atan2({x:.10f}, {y:.10f}) = {qiblaDirectionRad:.10f} rad
+
+8. Konversi ke Derajat:
+    - Q = {qiblaDirectionRad:.10f} rad × 180/π = {qiblaDirectionDeg:.10f}°
+
+9. Penyesuaian Arah Kiblat:
+    Jika hasil awal perhitungan arah Kiblat (Q) kurang dari 0°, 
+    itu menunjukkan bahwa arah tersebut berada di sisi kiri dari 0° (Utara) dalam sistem kompas. 
+    Untuk mengubah arah ini menjadi positif dan sesuai dengan rentang [0, 360)°, 
+    kita menambahkan 360°.
+        - Sebelum penyesuaian: {qiblaDirectionDeg:.10f}°
+        - Setelah penyesuaian: {qiblaDirectionDegAdjusted:.10f}°
+
+10. Jarak antara lokasi pengamatan dan Ka'bah (Masjid al-Haram): {distance_km:.2f} kilometer
+
+Kesimpulan:
+    Arah Kiblat dari lokasi pengamatan {lat1_dms_converted[0]}° {lat1_dms_converted[1]}’ {lat1_dms_converted[2]:.2f}” {'Lintang Selatan' if lat1 < 0 else 'Lintang Utara'}, {lon1_dms_converted[0]}° {lon1_dms_converted[1]}’ {lon1_dms_converted[2]:.2f}” {'Bujur Barat' if lon1 < 0 else 'Bujur Timur'}
+    menuju Ka'bah (Masjid al-Haram) adalah sebesar {qiblaDirectionDegAdjusted:.2f}° dari Utara.
+    Jarak antara lokasi pengamatan dan Ka'bah adalah sekitar {distance_km:.2f} kilometer.
+"""
+
+            return output.strip()
+
+        except Exception as e:
+            return f"Error: {str(e)}"
 
 # Buat skema
-schema = strawberry.Schema(query=Query, mutation=Mutation)
+schema = strawberry.Schema(query=Query)
 
 # Inisialisasi Flask
 app = Flask(__name__)
