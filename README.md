@@ -1,11 +1,12 @@
 # Solar and Qibla Direction Calculator API
 
-This is a Flask-based GraphQL API that calculates the solar position and Qibla direction based on the given latitude, longitude, and datetime. The API is implemented using Strawberry GraphQL.
+This is a Flask-based GraphQL API that calculates the solar position and Qibla direction based on the given latitude and longitude. The API is implemented using Strawberry GraphQL.
 
 ## Features
 
 - Calculate the solar position (elevation, azimuth) for a given location and time.
 - Calculate the Qibla direction from a given location.
+- Optionally use the current time if no specific datetime is provided.
 - Built with Strawberry GraphQL and Flask for a simple and efficient API.
 
 ## Requirements
@@ -59,29 +60,40 @@ This is a Flask-based GraphQL API that calculates the solar position and Qibla d
 
 ## Example Query
 
-Here is an example mutation you can run in the GraphiQL interface to calculate the solar position and Qibla direction:
+You can use the following query to calculate the solar position and Qibla direction based on latitude and longitude:
 
 ```graphql
-mutation {
-  calculateSolar(locationData: {
-    latitude: "5° 11' 25.8\" S",
-    longitude: "119° 27' 3.24\" E",
-    datetimeStr: "2024/07/31 17:27:00"
-  })
+query {
+  calculateSolar(
+    latitude: "5° 11' 25.8\" S", 
+    longitude: "119° 27' 3.24\" E"
+  )
 }
 ```
 
+### Parameters
+
+- **latitude**: The latitude of the observation location in DMS (Degrees, Minutes, Seconds) format. For example, `"5° 11' 25.8\" S"`.
+- **longitude**: The longitude of the observation location in DMS format. For example, `"119° 27' 3.24\" E"`.
+- **datetimeStr** (optional): The date and time of the observation in the format `YYYY/MM/DD HH:MM:SS`. If not provided, the current date and time will be used automatically.
+
 ### Response
 
-The API will return a string containing the solar position and Qibla direction:
+The API will return a string containing detailed information about the solar position, Qibla direction, and distance from the specified location to the Ka'bah:
 
 ```json
 {
   "data": {
-    "calculateSolar": "Local Time: 2024/07/31 17:27:00 (Asia/Makassar - WITA)\nUTC Time: 2024/07/31 09:27:00\nQibla Direction: 292.48° from the North\nSolar Elevation: 8.31°\nSolar Azimuth: 289.16°\nShadow Azimuth: 109.16°\nSolar Azimuth and Qibla Difference: 3.32°\nShadow Azimuth and Qibla Difference: 176.68°"
+    "calculateSolar": "1. Koordinat Lokasi Pengamatan: ..."
   }
 }
 ```
+
+This response includes:
+- The coordinates of the observation location and the Ka'bah.
+- Conversion of coordinates from DMS to decimal degrees and radians.
+- The Qibla direction in degrees.
+- The distance to the Ka'bah in kilometers.
 
 ## Project Structure
 
@@ -102,4 +114,3 @@ This project is licensed under the MIT License. See the [LICENSE](LICENSE) file 
 - [Flask](https://flask.palletsprojects.com/)
 - [PyEphem](https://rhodesmill.org/pyephem/)
 - [TimezoneFinder](https://pypi.org/project/timezonefinder/)
-
